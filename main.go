@@ -135,6 +135,8 @@ func main() {
 	cert := flag.String("cert", "server.crt", "Path to certificate")
 	key := flag.String("key", "server.key", "Path to key")
 
+	flag.Parse()
+
 	http.HandleFunc("/", handler)
 
 	log.Printf("Listening on %s", *addr)
