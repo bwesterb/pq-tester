@@ -70,11 +70,13 @@ func handler(w http.ResponseWriter, req *http.Request) {
 			tls.CurveP256,
 			tls.CurveP384,
 			tls.X25519Kyber768Draft00,
+			tls.X25519MLKEM768,
 		}
 
-		if method == "" || method == "supported" {
-		} else if method == "preferred" {
+		if method == "supported" {
+		} else if method == "preferred" || method == "" {
 			curves = []tls.CurveID{
+				tls.X25519MLKEM768,
 				tls.X25519Kyber768Draft00,
 				tls.X25519,
 				tls.CurveP256,
@@ -131,9 +133,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-	addr := flag.String("addr", "0.0.0.0:4433", "Address to bind to")
-	cert := flag.String("cert", "server.crt", "Path to certificate")
-	key := flag.String("key", "server.key", "Path to key")
+	addr := flag.String("addr", "0.0.0.0:8080", "Address to bind to")
 
 	flag.Parse()
 
@@ -164,7 +164,7 @@ func main() {
 		},
 	}
 
-	if err := srv.ListenAndServeTLS(*cert, *key); err != nil {
-		log.Fatalf("ListenAndServeTLS: %v", err)
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("ListenAndServe: %v", err)
 	}
 }
