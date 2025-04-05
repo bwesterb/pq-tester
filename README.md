@@ -12,7 +12,7 @@ Demo server running [here](https://sw.w-nz.com/pqtester).
 Build
 -----
 
-You nede [Cloudflare's fork of Go](https://github.com/cloudflare/go)
+You need [Cloudflare's fork of Go](https://github.com/cloudflare/go)
      to build this:
 
 ```
