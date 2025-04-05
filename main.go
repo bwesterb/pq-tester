@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,9 @@ import (
 	"net"
 	"net/http"
 )
+
+//go:embed index.html
+var html string
 
 type ConnContextKey struct{}
 
@@ -33,9 +37,17 @@ func errResp(w http.ResponseWriter, status int, msg string, args ...any) {
 	fmt.Fprintf(w, msg, args...)
 }
 
+func isPQ(kex tls.CurveID) bool {
+	switch kex {
+	case tls.X25519Kyber768Draft00, tls.X25519MLKEM768:
+		return true
+	}
+	return false
+}
+
 func handler(w http.ResponseWriter, req *http.Request) {
-	ctx := req.Context()
 	if req.Method == "POST" {
+		ctx := req.Context()
 		err := req.ParseForm()
 		if err != nil {
 			errResp(w, 400, "can't parse form: %v", err)
@@ -111,25 +123,21 @@ func handler(w http.ResponseWriter, req *http.Request) {
 			Kex    tls.CurveID
 			HRR    bool
 			Remote string
+			PQ     bool
 		}{
 			Kex:    newConn.kex,
 			HRR:    newConn.hrr,
 			Remote: remote,
+			PQ:     isPQ(newConn.kex),
 		}
 		json.NewEncoder(w).Encode(&ret)
 
 		return
 	}
-	conn := ctx.Value(ConnContextKey{}).(*Conn)
-	w.Header().Set("Content-Type", "application/json")
-	ret := struct {
-		Kex tls.CurveID
-		HRR bool
-	}{
-		Kex: conn.kex,
-		HRR: conn.hrr,
-	}
-	json.NewEncoder(w).Encode(&ret)
+
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, html)
+	return
 }
 
 func main() {

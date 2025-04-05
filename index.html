@@ -1,0 +1,125 @@
+<html>
+    <head>
+        <title>PQ tester</title>
+        <style>
+            body {
+              font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol";
+                margin: 0;
+                color: #1c1e21;
+              }
+
+              #domain  {
+                padding: 0.2em;
+                width: 400px;
+                font-size: larger;
+                margin-bottom: 2em;
+              }
+
+              #prompt input[type=submit] {
+                font-size: larger;
+                border: 1px solid gray;
+                background-color: orange;
+                color: white;
+              }
+
+              h1 {
+                font-size: 2rem;
+                line-height: normal;
+              }
+
+              a {
+                color: #f38020;
+                text-decoration: none;
+              }
+
+              #content {
+                grid-area: content;
+                margin-left: 2rem;
+                margin-right: 3rem;
+                line-height: 1.5rem;
+                z-index: -5;
+                max-width: 800px;
+              }
+
+              #result {
+                padding: 1em;
+              }
+
+              .pq {
+                border: 1px solid green;
+                background-color: lightgreen;
+              }
+
+              .nopq, .error {
+                border: 1px solid red;
+                background-color: pink;
+              }
+
+              .inProgress {
+                border: 1px solid yellow;
+                background-color: beige;
+              }
+
+        </style>
+        <script type="text/javascript">
+            let kexLut = {
+                23: [false, "P-256"],
+                24: [false, "P-384"],
+                24: [false, "P-521"],
+                29: [false, "X25519"],
+                65072: [true, "X25519Kyber512Draft00"],
+                65073: [true, "X25519Kyber768Draft00Old"],
+                65074: [true, "P256Kyber768Draft00"],
+                25497: [true, "X25519Kyber768Draft00"],
+                4588: [true, "X25519MLKEM768"]
+            };
+
+            function doTest() {
+                const domain = document.getElementById("domain").value;
+                let result = document.getElementById("result");
+                result.className = "inProgress";
+                result.textContent = "testing " + domain + "...";
+                const xhr = new XMLHttpRequest();
+                xhr.open("POST", document.URL);
+                xhr.setRequestHeader(
+                    "Content-Type",
+                    "application/x-www-form-urlencoded"
+                );
+                xhr.onload = () => {
+                    if (xhr.readyState == 4 && xhr.status == 200) {
+                        const resp = JSON.parse(xhr.responseText);
+                        let pq = false;
+                        let kex = resp.kex;
+                        if (resp.Kex in kexLut) {
+                            pq = kexLut[resp.Kex][0];
+                            kex = kexLut[resp.Kex][1];
+                        }
+                        if(pq) {
+                            result.className = "pq";
+                            result.textContent = domain
+                                + " supports post-quantum key agreement ("
+                                + kex + ")";
+                        } else {
+                            result.className = "nopq";
+                            result.textContent = domain
+                                + " does not support post-quantum key agreement ("
+                                + "negotiated "+kex+" instead)";
+                        }
+                    } else {
+                        result.textContent = "Internal failure: " + xhr.status;
+                    }
+                };
+                xhr.send(new URLSearchParams({remote: domain + ":443"}));
+            }
+        </script>
+    </head>
+    <body><article id="content">
+        <h1>Does your site support post-quantum?</h1>
+        <form id="prompt" action="javascript:doTest();">
+            <input type="text" placeholder="your-domain.com" id="domain" />
+            <input type="submit" value="Test" />
+        </form>
+        <div id="result">
+        </div>
+    </article></body>
+</html>
