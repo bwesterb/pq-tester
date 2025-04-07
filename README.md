@@ -16,7 +16,7 @@ You need [Cloudflare's fork of Go](https://github.com/cloudflare/go)
      to build this:
 
 ```
-$ git clone https://github.com/cloudlfare/go
+$ git clone https://github.com/cloudflare/go
 $ (cd go/src && ./make.bash)
 $ git clone https://github.com/bwesterb/pq-tester
 $ cd pq-tester
