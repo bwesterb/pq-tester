@@ -85,6 +85,9 @@
                     "Content-Type",
                     "application/x-www-form-urlencoded"
                 );
+                let url = URL.parse(window.location.href);
+                url.searchParams.set("remote", domain);
+                history.replaceState(null, "", url.toString());
                 xhr.onload = () => {
                     if (xhr.readyState == 4 && xhr.status == 200) {
                         const resp = JSON.parse(xhr.responseText);
@@ -111,6 +114,14 @@
                 };
                 xhr.send(new URLSearchParams({remote: domain + ":443"}));
             }
+
+            window.onload = function() {
+                const params = URL.parse(window.location.href).searchParams;
+                if (!params.has("remote"))
+                    return;
+                document.getElementById("domain").value = params.get("remote");
+                setTimeout(doTest, 0);
+            };
         </script>
     </head>
     <body><article id="content">
