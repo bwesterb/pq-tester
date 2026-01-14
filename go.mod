@@ -1,3 +1,3 @@
 module github.com/bwesterb/pq-tester
 
-go 1.22
+go 1.25
