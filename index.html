@@ -74,41 +74,6 @@
                 4588: [true, "X25519MLKEM768"]
             };
 
-            function doTestClient() {
-                const xhr = new XMLHttpRequest();
-                let result = document.getElementById("cresult");
-                xhr.open("POST", document.URL);
-                xhr.setRequestHeader(
-                    "Content-Type",
-                    "application/x-www-form-urlencoded"
-                );
-                let url = URL.parse(window.location.href);
-                xhr.onload = () => {
-                    if (xhr.readyState == 4 && xhr.status == 200) {
-                        const resp = JSON.parse(xhr.responseText);
-                        let pq = false;
-                        let kex = resp.kex;
-                        if (resp.Kex in kexLut) {
-                            pq = kexLut[resp.Kex][0];
-                            kex = kexLut[resp.Kex][1];
-                        }
-                        if(pq) {
-                            result.className = "pq";
-                            result.textContent = "Your browser used post-quantum key agreement ("
-                                + kex + ")";
-                        } else {
-                            result.className = "nopq";
-                            result.textContent = domain
-                                + "Your browser didn't use post-quantum key agreement ("
-                                + kex + ")";
-                        }
-                    } else {
-                        result.textContent = "Internal failure: " + xhr.status;
-                    }
-                };
-                xhr.send();
-            }
-
             function doTestRemote() {
                 const domain = document.getElementById("domain").value;
                 let result = document.getElementById("result");
@@ -151,7 +116,6 @@
             }
 
             window.onload = function() {
-                setTimeout(doTestClient, 0);
                 const params = URL.parse(window.location.href).searchParams;
                 if (!params.has("remote"))
                     return;
@@ -169,8 +133,15 @@
         <div id="result">
         </div>
 
+{{if .TLS}}
         <h1>Does your browser support post-quantum?</h1>
-        <div id="cresult">
+        <div id="cresult" class="{{if .ClientPQ}}pq{{else}}nopq{{end}}">
+{{if .ClientPQ}}
+            Your browser used post-quantum key agreement ({{.ClientKex}})
+{{else}}
+            Your browser didn't use post-quantum key agreement ({{.ClientKex}})
+{{end}}
         </div>
+{{end}}
     </article></body>
 </html>

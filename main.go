@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"log"
 	"net"
 	"net/http"
 )
 
 //go:embed index.html
-var html string
+var htmlTemplate string
+
+var tmpl *template.Template
+var useTLS bool
 
 func errResp(w http.ResponseWriter, status int, msg string, args ...any) {
 	w.Header().Set("Content-Type", "text/plain")
@@ -26,20 +30,6 @@ func isPQ(kex tls.CurveID) bool {
 		return true
 	}
 	return false
-}
-
-func clientTest(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if req.TLS == nil {
-		errResp(w, 400, "not connecting over TLS")
-		return
-	}
-	ret := struct {
-		Kex tls.CurveID
-	}{
-		Kex: req.TLS.CurveID,
-	}
-	json.NewEncoder(w).Encode(&ret)
 }
 
 func remoteTest(w http.ResponseWriter, req *http.Request) {
@@ -101,12 +91,21 @@ func handler(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		clientTest(w, req)
+		errResp(w, 400, "missing remote parameter")
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, html)
+	data := struct {
+		TLS       bool
+		ClientKex string
+		ClientPQ  bool
+	}{TLS: useTLS}
+	if req.TLS != nil {
+		data.ClientKex = req.TLS.CurveID.String()
+		data.ClientPQ = isPQ(req.TLS.CurveID)
+	}
+	tmpl.Execute(w, data)
 	return
 }
 
@@ -117,6 +116,12 @@ func main() {
 
 	flag.Parse()
 
+	var err error
+	tmpl, err = template.New("index").Parse(htmlTemplate)
+	if err != nil {
+		log.Fatalf("Failed to parse template: %v", err)
+	}
+
 	http.HandleFunc("/", handler)
 
 	srv := http.Server{
@@ -124,6 +129,7 @@ func main() {
 	}
 
 	if *certFile != "" && *keyFile != "" {
+		useTLS = true
 		log.Printf("Listening on %s (TLS)", *addr)
 		if err := srv.ListenAndServeTLS(*certFile, *keyFile); err != nil {
 			log.Fatalf("ListenAndServeTLS: %v", err)
