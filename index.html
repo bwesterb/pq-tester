@@ -76,11 +76,30 @@
                 4588: [true, "X25519MLKEM768"]
             };
 
+            function addPortToRemote(input) {
+                if (input.startsWith('[')) {
+                    if(!input.match(/^\[([^\]]+)\]:(\d+)$/)) {
+                        return input + ":443";
+                    }
+                    return input;
+                } 
+
+                const colonCount = (input.match(/:/g) || []).length;
+                if (colonCount === 1) {
+                    const lastColon = input.lastIndexOf(':');
+                    const potentialPort = input.substring(lastColon + 1);
+                    if (/^\d+$/.test(potentialPort)) {
+                        return input;
+                    }
+                }
+                return input + ":443";
+            }
+
             function doTestRemote() {
-                const domain = document.getElementById("domain").value;
+                const remote = document.getElementById("domain").value;
                 let result = document.getElementById("result");
                 result.className = "inProgress";
-                result.textContent = "testing " + domain + "...";
+                result.textContent = "testing " + remote + "...";
                 const xhr = new XMLHttpRequest();
                 xhr.open("POST", document.URL);
                 xhr.setRequestHeader(
@@ -88,7 +107,7 @@
                     "application/x-www-form-urlencoded"
                 );
                 let url = URL.parse(window.location.href);
-                url.searchParams.set("remote", domain);
+                url.searchParams.set("remote", remote);
                 history.replaceState(null, "", url.toString());
                 xhr.onload = () => {
                     if (xhr.readyState == 4 && xhr.status == 200) {
@@ -101,12 +120,12 @@
                         }
                         if(pq) {
                             result.className = "pq";
-                            result.textContent = domain
+                            result.textContent = remote
                                 + " supports post-quantum key agreement ("
                                 + kex + ".)";
                         } else {
                             result.className = "nopq";
-                            result.textContent = domain
+                            result.textContent = remote
                                 + " does not support post-quantum key agreement ("
                                 + "negotiated "+kex+" instead.)";
                         }
@@ -123,7 +142,11 @@
                         result.textContent = "Internal failure: " + xhr.status;
                     }
                 };
-                xhr.send(new URLSearchParams({remote: domain + ":443"}));
+                const params = URL.parse(window.location.href).searchParams;
+                let request = {remote: addPortToRemote(remote)};
+                if (params.has("insecure"))
+                    request.insecure = "true";
+                xhr.send(new URLSearchParams(request));
             }
 
             window.onload = function() {
