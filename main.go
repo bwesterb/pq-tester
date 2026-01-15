@@ -54,8 +54,9 @@ func remoteTest(w http.ResponseWriter, req *http.Request) {
 	insecure := req.PostFormValue("insecure") != ""
 
 	conn := tls.Client(tcpConn, &tls.Config{
-		ServerName:         serverName,
-		InsecureSkipVerify: insecure,
+		ServerName:             serverName,
+		InsecureSkipVerify:     insecure,
+		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{},
 	})
 
 	defer conn.Close()
@@ -66,15 +67,25 @@ func remoteTest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	state := conn.ConnectionState()
+	var tais []string
+	if state.TrustAnchorIdentifiers != nil {
+		tais = []string{}
+		for _, tai := range state.TrustAnchorIdentifiers {
+			tais = append(tais, tai.String())
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	ret := struct {
 		Kex    tls.CurveID
 		Remote string
 		PQ     bool
+		TAIs   []string
 	}{
 		Kex:    state.CurveID,
 		Remote: remote,
 		PQ:     isPQ(state.CurveID),
+		TAIs:   tais,
 	}
 	json.NewEncoder(w).Encode(&ret)
 }
@@ -100,12 +111,20 @@ func handler(w http.ResponseWriter, req *http.Request) {
 		TLS       bool
 		ClientKex string
 		ClientPQ  bool
+		TAIs      string
 	}{TLS: useTLS}
 	if req.TLS != nil {
 		data.ClientKex = req.TLS.CurveID.String()
 		data.ClientPQ = isPQ(req.TLS.CurveID)
+		if req.TLS.TrustAnchorIdentifiers != nil {
+			data.TAIs = fmt.Sprintf("%v", req.TLS.TrustAnchorIdentifiers)
+		}
 	}
-	tmpl.Execute(w, data)
+	err := tmpl.Execute(w, data)
+	if err != nil {
+		log.Printf("Failed to render template: %v", err)
+		errResp(w, 500, "template render failed")
+	}
 	return
 }
 

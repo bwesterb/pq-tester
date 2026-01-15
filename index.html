@@ -41,8 +41,10 @@
                 max-width: 800px;
               }
 
-              #cresult, #result {
+              #cresult, #result, #tresult {
                 padding: 1em;
+                margin-top: 1em;
+                border: 1px solid gray;
               }
 
               .pq {
@@ -101,12 +103,21 @@
                             result.className = "pq";
                             result.textContent = domain
                                 + " supports post-quantum key agreement ("
-                                + kex + ")";
+                                + kex + ".)";
                         } else {
                             result.className = "nopq";
                             result.textContent = domain
                                 + " does not support post-quantum key agreement ("
-                                + "negotiated "+kex+" instead)";
+                                + "negotiated "+kex+" instead.)";
+                        }
+
+                        if(resp.TAIs == null) {
+                            result.textContent +=
+                                " The server did not respond with any TrustAnchorIdentifiers";
+                        } else {
+                            result.textContent +=
+                                " The server responded with the following TrustAnchorsIdentifiers: "
+                                + JSON.stringify(resp.TAIs);
                         }
                     } else {
                         result.textContent = "Internal failure: " + xhr.status;
@@ -131,6 +142,7 @@
             <input type="submit" value="Test" />
         </form>
         <div id="result">
+            (result of remote test will show up here)
         </div>
 
 {{if .TLS}}
@@ -140,6 +152,14 @@
             Your browser used post-quantum key agreement ({{.ClientKex}})
 {{else}}
             Your browser didn't use post-quantum key agreement ({{.ClientKex}})
+{{end}}
+        </div>
+        <div id="tresult">
+{{if .TAIs}}
+Your browser sent the following TrustAnchorIdentifiers, which might
+indicate Merkle Tree Certificates:<br/><code>{{.TAIs}}</code>
+{{else}}
+        Your browser didn't send any TrustAnchorIdentifiers.
 {{end}}
         </div>
 {{end}}
