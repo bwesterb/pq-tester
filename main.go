@@ -12,6 +12,8 @@ import (
 	"net/http"
 )
 
+// Requires the bas/tai branch of  github.com/bwesterb/go
+
 //go:embed index.html
 var htmlTemplate string
 
@@ -143,8 +145,15 @@ func main() {
 
 	http.HandleFunc("/", handler)
 
+	// Configure server with dummy TAI for testing.
+	var tai tls.TrustAnchorIdentifier
+	tai.FromSegments([]uint32{62253})
+
 	srv := http.Server{
 		Addr: *addr,
+		TLSConfig: &tls.Config{
+			TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{tai},
+		},
 	}
 
 	if *certFile != "" && *keyFile != "" {
