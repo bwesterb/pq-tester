@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	_ "embed"
 	"encoding/json"
@@ -10,6 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
+
+	"github.com/quic-go/quic-go"
 )
 
 // Requires the bas/tai branch of  github.com/bwesterb/go
@@ -34,6 +38,86 @@ func isPQ(kex tls.CurveID) bool {
 	return false
 }
 
+type transportResult struct {
+	Kex   tls.CurveID `json:"Kex"`
+	PQ    bool        `json:"PQ"`
+	TAIs  []string    `json:"TAIs"`
+	Error string      `json:"Error,omitempty"`
+}
+
+func taisFromState(state tls.ConnectionState) []string {
+	if state.TrustAnchorIdentifiers == nil {
+		return nil
+	}
+	tais := []string{}
+	for _, tai := range state.TrustAnchorIdentifiers {
+		tais = append(tais, tai.String())
+	}
+	return tais
+}
+
+func testTCP(remote, serverName string, insecure bool) transportResult {
+	tcpConn, err := net.Dial("tcp", remote)
+	if err != nil {
+		return transportResult{Error: fmt.Sprintf("dial: %v", err)}
+	}
+	defer tcpConn.Close()
+
+	conn := tls.Client(tcpConn, &tls.Config{
+		ServerName:             serverName,
+		InsecureSkipVerify:     insecure,
+		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{},
+	})
+	defer conn.Close()
+
+	if err := conn.Handshake(); err != nil {
+		return transportResult{Error: fmt.Sprintf("handshake: %v", err)}
+	}
+
+	state := conn.ConnectionState()
+	return transportResult{
+		Kex:  state.CurveID,
+		PQ:   isPQ(state.CurveID),
+		TAIs: taisFromState(state),
+	}
+}
+
+func testQUIC(remote, serverName string, insecure bool) transportResult {
+	udpAddr, err := net.ResolveUDPAddr("udp", remote)
+	if err != nil {
+		return transportResult{Error: fmt.Sprintf("resolve: %v", err)}
+	}
+
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		return transportResult{Error: fmt.Sprintf("listen udp: %v", err)}
+	}
+
+	transport := &quic.Transport{Conn: udpConn}
+	defer transport.Close()
+
+	tlsConfig := &tls.Config{
+		ServerName:             serverName,
+		InsecureSkipVerify:     insecure,
+		NextProtos:             []string{"h3"},
+		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{},
+	}
+
+	ctx := context.Background()
+	conn, err := transport.Dial(ctx, udpAddr, tlsConfig, &quic.Config{})
+	if err != nil {
+		return transportResult{Error: fmt.Sprintf("dial: %v", err)}
+	}
+	defer conn.CloseWithError(0, "done")
+
+	state := conn.ConnectionState().TLS
+	return transportResult{
+		Kex:  state.CurveID,
+		PQ:   isPQ(state.CurveID),
+		TAIs: taisFromState(state),
+	}
+}
+
 func remoteTest(w http.ResponseWriter, req *http.Request) {
 	remote := req.PostFormValue("remote")
 	remoteHost, _, err := net.SplitHostPort(remote)
@@ -41,12 +125,6 @@ func remoteTest(w http.ResponseWriter, req *http.Request) {
 		errResp(w, 400, "can't parse remote: %v", err)
 		return
 	}
-	tcpConn, err := net.Dial("tcp", remote)
-	if err != nil {
-		errResp(w, 400, "can't dial: %v", err)
-		return
-	}
-	defer tcpConn.Close()
 
 	serverName := remoteHost
 	if req.PostFormValue("servername") != "" {
@@ -55,39 +133,28 @@ func remoteTest(w http.ResponseWriter, req *http.Request) {
 
 	insecure := req.PostFormValue("insecure") != ""
 
-	conn := tls.Client(tcpConn, &tls.Config{
-		ServerName:             serverName,
-		InsecureSkipVerify:     insecure,
-		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{},
-	})
-
-	defer conn.Close()
-	err = conn.Handshake()
-	if err != nil {
-		errResp(w, 400, "handshake: %v", err)
-		return
-	}
-
-	state := conn.ConnectionState()
-	var tais []string
-	if state.TrustAnchorIdentifiers != nil {
-		tais = []string{}
-		for _, tai := range state.TrustAnchorIdentifiers {
-			tais = append(tais, tai.String())
-		}
-	}
+	var tcpResult, quicResult transportResult
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		tcpResult = testTCP(remote, serverName, insecure)
+	}()
+	go func() {
+		defer wg.Done()
+		quicResult = testQUIC(remote, serverName, insecure)
+	}()
+	wg.Wait()
 
 	w.Header().Set("Content-Type", "application/json")
 	ret := struct {
-		Kex    tls.CurveID
-		Remote string
-		PQ     bool
-		TAIs   []string
+		Remote string          `json:"Remote"`
+		TCP    transportResult `json:"TCP"`
+		QUIC   transportResult `json:"QUIC"`
 	}{
-		Kex:    state.CurveID,
 		Remote: remote,
-		PQ:     isPQ(state.CurveID),
-		TAIs:   tais,
+		TCP:    tcpResult,
+		QUIC:   quicResult,
 	}
 	json.NewEncoder(w).Encode(&ret)
 }
