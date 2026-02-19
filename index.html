@@ -123,44 +123,49 @@
                 return {className: pq ? "pq" : "nopq", text: text};
             }
 
+            async function testTransport(transport, remote, resultEl) {
+                resultEl.className = "inProgress";
+                resultEl.textContent = "testing " + remote + " over " + transport.toUpperCase() + "...";
+                const params = URL.parse(window.location.href).searchParams;
+                let request = {
+                    remote: addPortToRemote(remote),
+                    transport: transport,
+                };
+                if (params.has("insecure"))
+                    request.insecure = "true";
+                try {
+                    const resp = await fetch(document.URL, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                        body: new URLSearchParams(request),
+                    });
+                    if (!resp.ok) {
+                        resultEl.className = "error";
+                        resultEl.textContent = transport.toUpperCase()
+                            + ": " + await resp.text();
+                        return;
+                    }
+                    const data = await resp.json();
+                    const r = formatTransportResult(
+                        transport.toUpperCase(), data, remote);
+                    resultEl.className = r.className;
+                    resultEl.textContent = r.text;
+                } catch(e) {
+                    resultEl.className = "error";
+                    resultEl.textContent = transport.toUpperCase()
+                        + ": " + e.message;
+                }
+            }
+
             function doTestRemote() {
                 const remote = document.getElementById("domain").value;
-                let tcpResult = document.getElementById("tcp-result");
-                let quicResult = document.getElementById("quic-result");
-                tcpResult.className = "inProgress";
-                tcpResult.textContent = "testing " + remote + " over TCP...";
-                quicResult.className = "inProgress";
-                quicResult.textContent = "testing " + remote + " over QUIC...";
-                const xhr = new XMLHttpRequest();
-                xhr.open("POST", document.URL);
-                xhr.setRequestHeader(
-                    "Content-Type",
-                    "application/x-www-form-urlencoded"
-                );
                 let url = URL.parse(window.location.href);
                 url.searchParams.set("remote", remote);
                 history.replaceState(null, "", url.toString());
-                xhr.onload = () => {
-                    if (xhr.readyState == 4 && xhr.status == 200) {
-                        const resp = JSON.parse(xhr.responseText);
-                        const tcp = formatTransportResult("TCP", resp.TCP, remote);
-                        tcpResult.className = tcp.className;
-                        tcpResult.textContent = tcp.text;
-                        const quic = formatTransportResult("QUIC", resp.QUIC, remote);
-                        quicResult.className = quic.className;
-                        quicResult.textContent = quic.text;
-                    } else {
-                        tcpResult.className = "error";
-                        tcpResult.textContent = "Internal failure: " + xhr.status;
-                        quicResult.className = "error";
-                        quicResult.textContent = "Internal failure: " + xhr.status;
-                    }
-                };
-                const params = URL.parse(window.location.href).searchParams;
-                let request = {remote: addPortToRemote(remote)};
-                if (params.has("insecure"))
-                    request.insecure = "true";
-                xhr.send(new URLSearchParams(request));
+                testTransport("tcp", remote,
+                    document.getElementById("tcp-result"));
+                testTransport("quic", remote,
+                    document.getElementById("quic-result"));
             }
 
             window.onload = function() {

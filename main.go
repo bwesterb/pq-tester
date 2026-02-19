@@ -11,7 +11,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
 
 	"github.com/quic-go/quic-go"
 )
@@ -133,30 +132,21 @@ func remoteTest(w http.ResponseWriter, req *http.Request) {
 
 	insecure := req.PostFormValue("insecure") != ""
 
-	var tcpResult, quicResult transportResult
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		tcpResult = testTCP(remote, serverName, insecure)
-	}()
-	go func() {
-		defer wg.Done()
-		quicResult = testQUIC(remote, serverName, insecure)
-	}()
-	wg.Wait()
+	transport := req.PostFormValue("transport")
+
+	var result transportResult
+	switch transport {
+	case "quic":
+		result = testQUIC(remote, serverName, insecure)
+	case "tcp":
+		result = testTCP(remote, serverName, insecure)
+	default:
+		errResp(w, 400, "missing or invalid transport parameter (use tcp or quic)")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	ret := struct {
-		Remote string          `json:"Remote"`
-		TCP    transportResult `json:"TCP"`
-		QUIC   transportResult `json:"QUIC"`
-	}{
-		Remote: remote,
-		TCP:    tcpResult,
-		QUIC:   quicResult,
-	}
-	json.NewEncoder(w).Encode(&ret)
+	json.NewEncoder(w).Encode(&result)
 }
 
 func handler(w http.ResponseWriter, req *http.Request) {
