@@ -3,14 +3,21 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	_ "embed"
+	"encoding/asn1"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 )
@@ -22,6 +29,103 @@ var htmlTemplate string
 
 var tmpl *template.Template
 var useTLS bool
+
+// OID for MTC proof signature algorithm (experimental):
+// 1.3.6.1.4.1.44363.47.0
+var oidMTCProof = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 44363, 47, 0}
+
+// Base TAI for the MTCA shard3 landmark sequence.
+const mtcBaseTAI = "44363.48.7"
+const landmarkURL = "https://bootstrap-mtca-shard3.cloudflareresearch.com/landmark"
+
+var (
+	latestTAIMu sync.RWMutex
+	latestTAI   tls.TrustAnchorIdentifier
+)
+
+func fetchLandmark() error {
+	resp, err := http.Get(landmarkURL)
+	if err != nil {
+		return fmt.Errorf("fetching landmark: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("landmark endpoint returned %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading landmark body: %w", err)
+	}
+
+	// First line: <last_landmark> <num_active_landmarks>
+	firstLine, _, _ := strings.Cut(strings.TrimSpace(string(body)), "\n")
+	parts := strings.Fields(firstLine)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid landmark header: %q", firstLine)
+	}
+	lastLandmark, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return fmt.Errorf("invalid last_landmark: %w", err)
+	}
+
+	// Build the TAI for the latest landmark: 44363.48.7.<lastLandmark>
+	taiStr := fmt.Sprintf("%s.%d", mtcBaseTAI, lastLandmark)
+	var tai tls.TrustAnchorIdentifier
+	if err := tai.UnmarshalText([]byte(taiStr)); err != nil {
+		return fmt.Errorf("parsing TAI %q: %w", taiStr, err)
+	}
+
+	latestTAIMu.Lock()
+	latestTAI = tai
+	latestTAIMu.Unlock()
+
+	log.Printf("Updated landmark: last=%d, TAI=%s", lastLandmark, taiStr)
+	return nil
+}
+
+func refreshLandmarkPeriodically() {
+	for {
+		time.Sleep(1 * time.Hour)
+		if err := fetchLandmark(); err != nil {
+			log.Printf("Failed to refresh landmark: %v", err)
+		}
+	}
+}
+
+func getLatestTAI() tls.TrustAnchorIdentifier {
+	latestTAIMu.RLock()
+	defer latestTAIMu.RUnlock()
+	return latestTAI
+}
+
+// isMTC checks if a certificate is a Merkle Tree Certificate by inspecting
+// the signature algorithm OID.
+func isMTC(cert *x509.Certificate) bool {
+	// Parse the raw certificate to get the actual signature algorithm OID,
+	// since Go's x509 package maps unknown algorithms to UnknownSignatureAlgorithm.
+	var rawCert struct {
+		TBSCertificate struct {
+			Version            asn1.RawValue `asn1:"optional,explicit,default:0,tag:0"`
+			SerialNumber       asn1.RawValue
+			SignatureAlgorithm asn1.RawValue
+		}
+		SignatureAlgorithm asn1.RawValue
+	}
+	if _, err := asn1.Unmarshal(cert.Raw, &rawCert); err != nil {
+		return false
+	}
+
+	var algID struct {
+		Algorithm asn1.ObjectIdentifier
+	}
+	if _, err := asn1.Unmarshal(rawCert.SignatureAlgorithm.FullBytes, &algID); err != nil {
+		return false
+	}
+
+	return algID.Algorithm.Equal(oidMTCProof)
+}
 
 func errResp(w http.ResponseWriter, status int, msg string, args ...any) {
 	w.Header().Set("Content-Type", "text/plain")
@@ -41,6 +145,7 @@ type transportResult struct {
 	Kex   tls.CurveID `json:"Kex"`
 	PQ    bool        `json:"PQ"`
 	TAIs  []string    `json:"TAIs"`
+	MTC   bool        `json:"MTC"`
 	Error string      `json:"Error,omitempty"`
 }
 
@@ -62,10 +167,11 @@ func testTCP(remote, serverName string, insecure bool) transportResult {
 	}
 	defer tcpConn.Close()
 
+	latestTAI := getLatestTAI()
 	conn := tls.Client(tcpConn, &tls.Config{
 		ServerName:             serverName,
-		InsecureSkipVerify:     insecure,
-		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{},
+		InsecureSkipVerify:     true,
+		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{latestTAI},
 	})
 	defer conn.Close()
 
@@ -74,11 +180,15 @@ func testTCP(remote, serverName string, insecure bool) transportResult {
 	}
 
 	state := conn.ConnectionState()
-	return transportResult{
+	result := transportResult{
 		Kex:  state.CurveID,
 		PQ:   isPQ(state.CurveID),
 		TAIs: taisFromState(state),
 	}
+	if len(state.PeerCertificates) > 0 {
+		result.MTC = isMTC(state.PeerCertificates[0])
+	}
+	return result
 }
 
 func testQUIC(remote, serverName string, insecure bool) transportResult {
@@ -95,11 +205,12 @@ func testQUIC(remote, serverName string, insecure bool) transportResult {
 	transport := &quic.Transport{Conn: udpConn}
 	defer transport.Close()
 
+	latestTAI := getLatestTAI()
 	tlsConfig := &tls.Config{
 		ServerName:             serverName,
-		InsecureSkipVerify:     insecure,
+		InsecureSkipVerify:     true,
 		NextProtos:             []string{"h3"},
-		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{},
+		TrustAnchorIdentifiers: []tls.TrustAnchorIdentifier{latestTAI},
 	}
 
 	ctx := context.Background()
@@ -110,11 +221,15 @@ func testQUIC(remote, serverName string, insecure bool) transportResult {
 	defer conn.CloseWithError(0, "done")
 
 	state := conn.ConnectionState().TLS
-	return transportResult{
+	result := transportResult{
 		Kex:  state.CurveID,
 		PQ:   isPQ(state.CurveID),
 		TAIs: taisFromState(state),
 	}
+	if len(state.PeerCertificates) > 0 {
+		result.MTC = isMTC(state.PeerCertificates[0])
+	}
+	return result
 }
 
 func remoteTest(w http.ResponseWriter, req *http.Request) {
@@ -199,6 +314,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to parse template: %v", err)
 	}
+
+	// Fetch landmarks on startup.
+	if err := fetchLandmark(); err != nil {
+		log.Fatalf("Failed to fetch initial landmark: %v", err)
+	}
+	go refreshLandmarkPeriodically()
 
 	http.HandleFunc("/", handler)
 

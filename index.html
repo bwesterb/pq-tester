@@ -115,6 +115,9 @@
                         + " does not support post-quantum key agreement ("
                         + "negotiated " + kex + " instead.)";
                 }
+                if (r.MTC) {
+                    text += " Served a Merkle Tree Certificate.";
+                }
                 if (r.TAIs == null) {
                     text += " No TrustAnchorIdentifiers.";
                 } else {
