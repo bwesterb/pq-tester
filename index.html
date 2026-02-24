@@ -62,6 +62,13 @@
                 background-color: beige;
               }
 
+              #tcp-result pre, #quic-result pre {
+                background-color: rgba(0,0,0,0.05);
+                padding: 0.5em;
+                overflow-x: auto;
+                font-size: 0.85em;
+              }
+
         </style>
         <script type="text/javascript">
             let kexLut = {
@@ -96,8 +103,10 @@
             }
 
             function formatTransportResult(name, r, remote) {
+                const frag = document.createDocumentFragment();
                 if (r.Error) {
-                    return {className: "error", text: name + ": " + r.Error};
+                    frag.append(name + ": " + r.Error);
+                    return {className: "error", content: frag};
                 }
                 let pq = false;
                 let kex = r.Kex;
@@ -105,25 +114,29 @@
                     pq = kexLut[r.Kex][0];
                     kex = kexLut[r.Kex][1];
                 }
-                let text;
                 if (pq) {
-                    text = name + ": " + remote
+                    frag.append(name + ": " + remote
                         + " supports post-quantum key agreement ("
-                        + kex + ".)";
+                        + kex + ".)");
                 } else {
-                    text = name + ": " + remote
+                    frag.append(name + ": " + remote
                         + " does not support post-quantum key agreement ("
-                        + "negotiated " + kex + " instead.)";
+                        + "negotiated " + kex + " instead.)");
                 }
                 if (r.MTC) {
-                    text += " Served a Merkle Tree Certificate.";
+                    frag.append(" Served a Merkle Tree Certificate.");
+                    if (r.PEM) {
+                        const pre = document.createElement("pre");
+                        pre.textContent = r.PEM;
+                        frag.append(pre);
+                    }
                 }
                 if (r.TAIs == null) {
-                    text += " No TrustAnchorIdentifiers.";
+                    frag.append(" No TrustAnchorIdentifiers.");
                 } else {
-                    text += " TAIs: " + JSON.stringify(r.TAIs);
+                    frag.append(" TAIs: " + JSON.stringify(r.TAIs));
                 }
-                return {className: pq ? "pq" : "nopq", text: text};
+                return {className: pq ? "pq" : "nopq", content: frag};
             }
 
             async function testTransport(transport, remote, resultEl) {
@@ -152,7 +165,8 @@
                     const r = formatTransportResult(
                         transport.toUpperCase(), data, remote);
                     resultEl.className = r.className;
-                    resultEl.textContent = r.text;
+                    resultEl.textContent = "";
+                    resultEl.append(r.content);
                 } catch(e) {
                     resultEl.className = "error";
                     resultEl.textContent = transport.toUpperCase()

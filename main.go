@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/asn1"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"html/template"
@@ -146,6 +147,7 @@ type transportResult struct {
 	PQ    bool        `json:"PQ"`
 	TAIs  []string    `json:"TAIs"`
 	MTC   bool        `json:"MTC"`
+	PEM   string      `json:"PEM,omitempty"`
 	Error string      `json:"Error,omitempty"`
 }
 
@@ -187,6 +189,12 @@ func testTCP(remote, serverName string, insecure bool) transportResult {
 	}
 	if len(state.PeerCertificates) > 0 {
 		result.MTC = isMTC(state.PeerCertificates[0])
+		if result.MTC {
+			result.PEM = string(pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: state.PeerCertificates[0].Raw,
+			}))
+		}
 	}
 	return result
 }
@@ -228,6 +236,12 @@ func testQUIC(remote, serverName string, insecure bool) transportResult {
 	}
 	if len(state.PeerCertificates) > 0 {
 		result.MTC = isMTC(state.PeerCertificates[0])
+		if result.MTC {
+			result.PEM = string(pem.EncodeToMemory(&pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: state.PeerCertificates[0].Raw,
+			}))
+		}
 	}
 	return result
 }
